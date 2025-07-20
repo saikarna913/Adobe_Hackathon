@@ -1,0 +1,5 @@
+text,font,size,spacing,length,word_count,is_bold,ends_with_punct,is_upper,is_title_case,starts_with_number,relative_y,line_number,page,label
+Report Title,Arial-Bold,12,40,12,2,1,0,1,1,0,0.03,0,0,title
+1. Introduction,Arial-Bold,12,20,17,2,1,0,0,1,1,0.1,2,0,h1
+1.1 Scope,Arial-Bold,12,10,10,2,1,0,0,1,1,0.15,3,0,h2
+This is the first paragraph.,Arial,12,5,30,6,0,1,0,0,0,0.2,4,0,paragraph
