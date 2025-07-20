@@ -4,8 +4,11 @@ import re
 import argparse
 
 
+import fitz
+import pandas as pd
+import re
+
 def extract_features_from_pdf(pdf_path):
-    """Extracts structural features from PDF lines, with inline relative font size tracking."""
     doc = fitz.open(pdf_path)
     data = []
     max_font_size = 0
@@ -22,33 +25,56 @@ def extract_features_from_pdf(pdf_path):
                 if not spans:
                     continue
 
-                full_text = " ".join([span["text"].strip() for span in spans if span["text"].strip()])
+                full_text = ""
+                bold_count = 0
+                font_sizes = []
+                fonts = []
+                x0_values = []
+
+                for span in spans:
+                    span_text = span.get("text", "").strip()
+                    if not span_text:
+                        continue
+                    full_text += span_text + " "
+                    if "Bold" in span["font"]:
+                        bold_count += 1
+                    font_sizes.append(span["size"])
+                    fonts.append(span["font"])
+                    x0_values.append(span["bbox"][0])
+
+                full_text = full_text.strip()
                 if not full_text:
                     continue
 
-                rep_span = spans[0]
+                # Choose the most common font and average size
+                font = max(set(fonts), key=fonts.count)
+                size = sum(font_sizes) / len(font_sizes)
+                is_bold = int(bold_count > len(spans) // 2)
+                x0 = sum(x0_values) / len(x0_values)
+
                 y0 = line["bbox"][1]
                 spacing = y0 - prev_y if prev_y else 0
                 relative_y = y0 / page_height
                 word_count = len(full_text.split())
-                size = rep_span["size"]
+
                 max_font_size = max(max_font_size, size)
 
                 features = {
                     "text": full_text,
-                    "font": rep_span["font"],
+                    "font": font,
                     "size": size,
                     "spacing": spacing,
                     "length": len(full_text),
                     "word_count": word_count,
-                    "is_bold": int("Bold" in rep_span["font"]),
+                    "is_bold": is_bold,
                     "ends_with_punct": int(bool(re.search(r"[.!?:;]$", full_text))),
                     "is_upper": int(full_text.isupper()),
                     "is_title_case": int(full_text.istitle()),
                     "starts_with_number": int(bool(re.match(r"^\d+(\.\d+)*", full_text))),
                     "relative_y": relative_y,
                     "line_number": line_number,
-                    "page": page_num
+                    "page": page_num,
+                    "x0": x0  # used for center/side align detection
                 }
 
                 data.append(features)
@@ -56,12 +82,9 @@ def extract_features_from_pdf(pdf_path):
                 line_number += 1
 
     df = pd.DataFrame(data)
-
-    if max_font_size > 0:
-        df["relative_font_size"] = df["size"] / max_font_size
-    else:
-        df["relative_font_size"] = 1.0
-
+    df["relative_font_size"] = df["size"] / max_font_size if max_font_size else 1.0
+    df["has_colon"] = df["text"].str.contains(":").astype(int)
+    df["capital_ratio"] = df["text"].apply(lambda x: sum(c.isupper() for c in x) / len(x) if len(x) > 0 else 0)
     return df
 
 
@@ -131,8 +154,7 @@ if __name__ == "__main__":
     df = merge_title_lines_safe(df)
     df = add_text_features(df)
 
-    if args.save:
-        df.to_csv("test_data.csv", index=False)
-        print("[+] Saved to test_data.csv")
+    df.to_csv("test_data.csv", index=False)
+    print("[+] Saved to test_data.csv")
 
     print(df.head(10))
