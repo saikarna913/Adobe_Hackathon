@@ -112,3 +112,20 @@ class PDFHeadingFeatureExtractor:
         score += 5 if row["starts_with_number"] else 0
 
         return score
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Extract heading features from a PDF.")
+    parser.add_argument("pdf_path", help="Path to input PDF file")
+    parser.add_argument("--output", help="Optional: Path to save features as CSV")
+
+    args = parser.parse_args()
+
+    extractor = PDFHeadingFeatureExtractor(args.pdf_path)
+    df = extractor.extract()
+
+    print("\nTop 5 extracted lines with features:")
+    print(df[["text", "font_size", "relative_font_size", "is_bold", "is_title_case"]].head())
+
+    if args.output:
+        df.to_csv(args.output, index=False)
+        print(f"\n✅ Features saved to: {args.output}")
