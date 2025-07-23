@@ -3,6 +3,8 @@ import pandas as pd
 import re
 from statistics import median
 import numpy as np
+import sys
+import os
 
 class PDFFeatureExtractor:
     """
@@ -121,18 +123,50 @@ class PDFFeatureExtractor:
         
         return df
 
-    # Rule-based scoring methods (same as original)
-    def calculate_outline_score(self, row: pd.Series) -> float: ...
-    def calculate_heading_score(self, row: pd.Series) -> float: ...
-    def calculate_title_score(self, row: pd.Series) -> float: ...
+    def calculate_outline_score(self, row: pd.Series) -> float:
+        score = 0.0
+        if row["starts_with_number"] & row["length_norm"] > 0.5:
+            score += 0.4
+        if row["has_colon"]:
+            score += 0.1
+        if row["is_bold"]:
+            score += 0.2
+        if row["relative_font_size"] > 1.0:
+            score += 0.2
+        if row["capital_ratio"] > 0.5:
+            score += 0.1
+        return round(score, 3)
+
+    def calculate_heading_score(self, row: pd.Series) -> float:
+        score = 0.0
+        if row["is_title_case"]:
+            score += 0.3
+        if row["is_bold"]:
+            score += 0.3
+        if row["relative_font_size"] > 1.1:
+            score += 0.3
+        if row["line_density"] < 1.5:
+            score += 0.1
+        return round(score, 3)
+
+    def calculate_title_score(self, row: pd.Series) -> float:
+        score = 0.0
+        if row["page"] == 0:
+            score += 0.3
+        if row["relative_y"] < 0.3:
+            score += 0.2
+        if row["relative_font_size"] > 1.3:
+            score += 0.3
+        if row["is_bold"] or row["is_upper"]:
+            score += 0.2
+        return round(score, 3)
 
     def detect_hierarchy(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Adds hierarchy level based on indentation and font size."""
         if len(df) == 0:
             return df
         
         df["norm_font_size"] = (df["font_size"] - df["font_size"].min()) / \
-                              (df["font_size"].max() - df["font_size"].min())
+                               (df["font_size"].max() - df["font_size"].min())
         df["norm_indent"] = df["relative_x"]
         
         bins = np.linspace(0, 1, 4)
@@ -140,3 +174,23 @@ class PDFFeatureExtractor:
         df["level"] = df["level"].max() - df["level"]
         
         return df
+
+# ✅ CLI Entry Point
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: python pdf_extractor.py <path_to_pdf>")
+        sys.exit(1)
+
+    pdf_path = sys.argv[1]
+
+    if not os.path.exists(pdf_path):
+        print(f"File not found: {pdf_path}")
+        sys.exit(1)
+
+    extractor = PDFFeatureExtractor(pdf_path)
+    df = extractor.extract_features()
+    df = extractor.detect_hierarchy(df)
+
+    output_path = os.path.splitext(pdf_path)[0] + "_features.xlsx"
+    df.to_excel(output_path, index=False)
+    print(f"Feature extraction complete. Output saved to: {output_path}")
