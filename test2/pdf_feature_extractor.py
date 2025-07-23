@@ -125,7 +125,9 @@ class PDFFeatureExtractor:
 
     def calculate_outline_score(self, row: pd.Series) -> float:
         score = 0.0
-        if row["starts_with_number"] & row["length_norm"] > 0.5:
+        if row["length"] < 5:
+            return 0.0
+        if row["starts_with_number"] :
             score += 0.4
         if row["has_colon"]:
             score += 0.1
