@@ -3,9 +3,9 @@
 This folder contains the optimized ML-enhanced PDF outline extraction system for Challenge 1A.
 
 ## 🎯 Performance Results
-- **ML-Enhanced F1 Score: 0.509**
-- **Rule-Based F1 Score: 0.302** 
-- **Improvement: +68.4%**
+- **ML-Enhanced F1 Score: 0.522**
+- **Improved Extractor F1 Score: 0.474** 
+- **ML vs Improved: +10.2%**
 
 ## 📁 File Structure
 
@@ -22,7 +22,7 @@ This folder contains the optimized ML-enhanced PDF outline extraction system for
 
 ### Main Interface & Testing
 - **`main.py`** - CLI interface for the complete ML pipeline ⭐ **MAIN SUBMISSION SCRIPT**
-- **`test_ml_enhanced.py`** - Comprehensive test script with ground truth comparison
+- **`test_ml_enhanced.py`** - Comprehensive test script comparing ML-enhanced vs improved approaches
 
 ### Test Data
 - **`pdfs/`** - Collection of test PDF files from Challenge 1A and 1B
@@ -33,6 +33,7 @@ This folder contains the optimized ML-enhanced PDF outline extraction system for
 ```bash
 python test_ml_enhanced.py
 ```
+*Compares ML-enhanced vs improved extractor approaches with detailed metrics*
 
 ### CLI Interface
 ```bash
@@ -68,11 +69,11 @@ result = extractor.extract_outline_json('document.pdf')
 - ✅ **Document-aware filtering** - Adaptive to forms, academic papers, manuals, etc.
 
 ## 📊 Performance by Document Type
-- **Forms (E0CCG5S239)**: Perfect F1 (1.000)
-- **Academic Papers (STEMPathwaysFlyer)**: Good F1 (0.500) 
-- **Technical Documents (E0CCG5S312)**: Balanced F1 (0.385)
-- **Government Documents (E0H1CM114)**: High precision (0.857)
-- **Invitations (TOPJUMP)**: Good recall (1.000)
+- **Forms (E0CCG5S239)**: ML Perfect F1 (1.000) vs Improved (0.000)
+- **Academic Papers (STEMPathwaysFlyer)**: Both approaches F1 (0.500) 
+- **Technical Documents (E0CCG5S312)**: Improved F1 (0.593) vs ML (0.462)
+- **Government Documents (E0H1CM114)**: Improved F1 (0.610) vs ML (0.250)
+- **Invitations (TOPJUMP)**: Improved F1 (0.667) vs ML (0.400)
 
 ## 🔧 Technical Details
 - **Algorithm**: Random Forest + Rule-based ensemble
