@@ -166,16 +166,23 @@ class PDFFeatureExtractor:
     def detect_hierarchy(self, df: pd.DataFrame) -> pd.DataFrame:
         if len(df) == 0:
             return df
-        
+
         df["norm_font_size"] = (df["font_size"] - df["font_size"].min()) / \
-                               (df["font_size"].max() - df["font_size"].min())
+                            (df["font_size"].max() - df["font_size"].min())
         df["norm_indent"] = df["relative_x"]
-        
-        bins = np.linspace(0, 1, 4)
-        df["level"] = np.digitize(df["norm_font_size"] * 0.7 + df["norm_indent"] * 0.3, bins)
+
+        # Create 5 bins → need 6 edges
+        bins = np.linspace(0, 1, 7)
+
+        # Compute a weighted score from normalized font size and indent
+        score = df["norm_font_size"] * 0.7 + df["norm_indent"] * 0.3
+        df["level"] = np.digitize(score, bins, right=False)
+
+        # Flip the level so higher levels (e.g., title) are lower numbers
         df["level"] = df["level"].max() - df["level"]
-        
+
         return df
+
 
 # ✅ CLI Entry Point
 if __name__ == "__main__":
