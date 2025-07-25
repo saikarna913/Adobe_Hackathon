@@ -13,11 +13,12 @@ class PDFFeatureExtractor:
     
     def __init__(self, pdf_path: str = None):
         self.pdf_path = pdf_path
-        self.font_sizes = []
         self.feature_names = [
             'relative_font_size', 'is_bold', 'is_title_case', 'ends_with_punct',
             'starts_with_number', 'has_colon', 'capital_ratio', 'relative_y',
-            'length_norm', 'line_density', 'prev_spacing', 'next_spacing'
+            'length_norm', 'line_density', 'prev_spacing', 'next_spacing',
+            'is_all_caps', 'word_count', 'is_centered',
+            'font_variation', 'position_score', 'structure_score', 'semantic_score'
         ]
     
     def extract_features(self) -> pd.DataFrame:
@@ -27,14 +28,28 @@ class PDFFeatureExtractor:
 
         doc = fitz.open(self.pdf_path)
         all_lines = []
-        prev_y = 0
+        
+        # First pass to gather font stats
+        font_sizes = []
+        for page in doc:
+            blocks = page.get_text("dict")["blocks"]
+            for block in blocks:
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        font_sizes.append(span["size"])
 
+        if not font_sizes:
+            return pd.DataFrame(columns=self.feature_names + ['text', 'page'])
+
+        median_font_size = median(font_sizes) if font_sizes else 12.0
+        font_std = np.std(font_sizes) if len(font_sizes) > 1 else 0
+
+        # Second pass to extract features
         for page_num, page in enumerate(doc):
             blocks = page.get_text("dict")["blocks"]
             page_height = page.rect.height
             page_width = page.rect.width
-            line_number = 0
-
+            
             page_lines = []
             for block in blocks:
                 for line in block.get("lines", []):
@@ -42,140 +57,99 @@ class PDFFeatureExtractor:
                     if not spans:
                         continue
 
-                    full_text = ""
-                    bold_count = 0
-                    font_sizes = []
-                    fonts = []
-                    bbox = line["bbox"]
-
-                    for span in spans:
-                        span_text = span.get("text", "").strip()
-                        if not span_text:
-                            continue
-                        full_text += span_text + " "
-                        if "bold" in span["font"].lower():
-                            bold_count += 1
-                        font_sizes.append(span["size"])
-                        fonts.append(span["font"])
-                        self.font_sizes.append(span["size"])
-
-                    full_text = full_text.strip()
+                    # Reassemble line
+                    full_text = " ".join([s["text"].strip() for s in spans]).strip()
                     if not full_text:
                         continue
 
-                    avg_font_size = sum(font_sizes) / len(font_sizes)
-                    is_bold = int(bold_count > len(spans) / 2)
-                    y0 = bbox[1]
-                    spacing = y0 - prev_y if prev_y else 0
-                    relative_y = y0 / page_height
+                    # Line-level properties
+                    bbox = line["bbox"]
+                    avg_font_size = sum(s["size"] for s in spans) / len(spans)
+                    is_bold = int(any("bold" in s["font"].lower() for s in spans))
+                    
+                    # Feature calculation
+                    relative_y = bbox[1] / page_height if page_height > 0 else 0
                     line_width = bbox[2] - bbox[0]
-                    relative_x = bbox[0] / page_width
+                    relative_x = bbox[0] / page_width if page_width > 0 else 0
+                    
+                    # Position score
+                    position_score = (1 - relative_y) * 0.5
+                    if relative_x < 0.2:
+                        position_score += 0.3
+                    
+                    # Structure score
+                    structure_score = 0
+                    if re.match(r'^\d+\.?\s+', full_text):
+                        structure_score += 0.5
+                    if full_text.endswith(':'):
+                        structure_score += 0.3
+                    if full_text.isupper() and 3 < len(full_text) < 50:
+                        structure_score += 0.2
+
+                    # Semantic score
+                    semantic_score = 0
+                    semantic_patterns = [
+                        r'\b(introduction|overview|summary|conclusion|background)\b',
+                        r'\b(chapter|section|part|appendix)\s+\w+',
+                        r'\b(table\s+of\s+contents|references|bibliography)\b',
+                        r'\b(objectives?|methodology|results?|discussion)\b'
+                    ]
+                    if any(re.search(p, full_text.lower()) for p in semantic_patterns):
+                        semantic_score = 0.2
 
                     line_data = {
                         "text": full_text,
-                        "length": len(full_text),
                         "is_bold": is_bold,
                         "ends_with_punct": int(bool(re.search(r"[.!?:;]$", full_text))),
-                        "is_upper": int(full_text.isupper()),
+                        "is_all_caps": int(full_text.isupper() and len(full_text) > 1),
+                        "word_count": len(full_text.split()),
+                        "is_centered": int(abs((relative_x + (line_width / page_width) / 2) - 0.5) < 0.1 if page_width > 0 else 0),
                         "is_title_case": int(full_text.istitle()),
                         "starts_with_number": int(bool(re.match(r"^\d+(\.\d+)*", full_text))),
                         "has_colon": int(":" in full_text),
                         "capital_ratio": sum(1 for c in full_text if c.isupper()) / len(full_text) if len(full_text) > 0 else 0,
                         "font_size": avg_font_size,
-                        "line_number": line_number,
                         "page": page_num,
                         "relative_y": relative_y,
-                        "relative_x": relative_x,
-                        "line_width": line_width,
-                        "spacing": spacing,
-                        "bbox": bbox
+                        "bbox": bbox,
+                        "font_variation": font_std / median_font_size if median_font_size > 0 else 0,
+                        "position_score": position_score,
+                        "structure_score": structure_score,
+                        "semantic_score": semantic_score,
+                        "length": len(full_text)
                     }
                     page_lines.append(line_data)
-                    prev_y = y0
-                    line_number += 1
-
-            # Add context-aware features
+            
+            # Add context-aware features (spacing, density)
             for i, line in enumerate(page_lines):
-                prev_spacing = page_lines[i-1]["spacing"] if i > 0 else 0
-                next_spacing = page_lines[i+1]["spacing"] if i < len(page_lines)-1 else 0
-                line_density = line["length"] / line["line_width"] if line["line_width"] > 0 else 0
+                prev_bbox_bottom = page_lines[i-1]["bbox"][3] if i > 0 else 0
+                next_bbox_top = page_lines[i+1]["bbox"][1] if i < len(page_lines)-1 else page_height
                 
-                line.update({
-                    "prev_spacing": prev_spacing,
-                    "next_spacing": next_spacing,
-                    "line_density": line_density
-                })
+                line["prev_spacing"] = (line["bbox"][1] - prev_bbox_bottom) / page_height if page_height > 0 else 0
+                line["next_spacing"] = (next_bbox_top - line["bbox"][3]) / page_height if page_height > 0 else 0
+                line["line_density"] = line["length"] / (line["bbox"][2] - line["bbox"][0]) if (line["bbox"][2] - line["bbox"][0]) > 0 else 0
             
             all_lines.extend(page_lines)
+
+        if not all_lines:
+            return pd.DataFrame(columns=self.feature_names + ['text', 'page'])
 
         df = pd.DataFrame(all_lines)
         
         # Normalize features
-        median_font_size = median(self.font_sizes) if self.font_sizes else 1.0
         df["relative_font_size"] = df["font_size"] / median_font_size
-        max_length = df["length"].max() if not df["length"].empty else 1
-        df["length_norm"] = df["length"] / max_length
+        max_len = df["length"].max()
+        df["length_norm"] = df["length"] / max_len if max_len > 0 else 0
         
-        # Add rule-based scores
-        df["outline_score"] = df.apply(self.calculate_outline_score, axis=1)
-        df["heading_score"] = df.apply(self.calculate_heading_score, axis=1)
-        df["title_score"] = df.apply(self.calculate_title_score, axis=1)
+        # Ensure all feature columns exist, even if empty
+        for col in self.feature_names:
+            if col not in df:
+                df[col] = 0
         
-        return df
-
-    def calculate_outline_score(self, row: pd.Series) -> float:
-        score = 0.0
-        if row["length"] < 5:
-            return 0.0
-        if row["starts_with_number"] :
-            score += 0.4
-        if row["has_colon"]:
-            score += 0.1
-        if row["is_bold"]:
-            score += 0.2
-        if row["relative_font_size"] > 1.0:
-            score += 0.2
-        if row["capital_ratio"] > 0.5:
-            score += 0.1
-        return round(score, 3)
-
-    def calculate_heading_score(self, row: pd.Series) -> float:
-        score = 0.0
-        if row["is_title_case"]:
-            score += 0.3
-        if row["is_bold"]:
-            score += 0.3
-        if row["relative_font_size"] > 1.1:
-            score += 0.3
-        if row["line_density"] < 1.5:
-            score += 0.1
-        return round(score, 3)
-
-    def calculate_title_score(self, row: pd.Series) -> float:
-        score = 0.0
-        if row["page"] == 0:
-            score += 0.3
-        if row["relative_y"] < 0.3:
-            score += 0.2
-        if row["relative_font_size"] > 1.3:
-            score += 0.3
-        if row["is_bold"] or row["is_upper"]:
-            score += 0.2
-        return round(score, 3)
-
-    def detect_hierarchy(self, df: pd.DataFrame) -> pd.DataFrame:
-        if len(df) == 0:
-            return df
+        # Drop temporary columns and ensure correct order
+        df_final = df[self.feature_names + ['text', 'page']]
         
-        df["norm_font_size"] = (df["font_size"] - df["font_size"].min()) / \
-                               (df["font_size"].max() - df["font_size"].min())
-        df["norm_indent"] = df["relative_x"]
-        
-        bins = np.linspace(0, 1, 4)
-        df["level"] = np.digitize(df["norm_font_size"] * 0.7 + df["norm_indent"] * 0.3, bins)
-        df["level"] = df["level"].max() - df["level"]
-        
-        return df
+        return df_final
 
 # ✅ CLI Entry Point
 if __name__ == "__main__":
@@ -191,7 +165,12 @@ if __name__ == "__main__":
 
     extractor = PDFFeatureExtractor(pdf_path)
     df = extractor.extract_features()
-    df = extractor.detect_hierarchy(df)
+    
+    # For CLI execution, print the DataFrame
+    print(df.head().to_string())
+    output_path = os.path.splitext(pdf_path)[0] + "_features.csv"
+    df.to_csv(output_path, index=False)
+    print(f"\n✅ Features extracted and saved to {output_path}")
 
     output_path = os.path.splitext(pdf_path)[0] + "_features.xlsx"
     df.to_excel(output_path, index=False)

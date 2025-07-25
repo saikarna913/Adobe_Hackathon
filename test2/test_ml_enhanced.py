@@ -12,22 +12,20 @@ import difflib
 from ml_enhanced_extractor import MLEnhancedPDFExtractor
 from improved_extractor import ImprovedPDFExtractor
 from datetime import datetime
+from collections import defaultdict
 
-def load_ground_truth(pdf_name):
-    """Load ground truth for a PDF"""
-    ground_truth_files = {
-        'STEMPathwaysFlyer': '/home/pakambo/Documents/branch1/Adobe_Hackathon/Challenge_1a/Datasets/Output.json/STEMPathwaysFlyer.json',
-        'E0CCG5S239': '/home/pakambo/Documents/branch1/Adobe_Hackathon/Challenge_1a/Datasets/Output.json/E0CCG5S239.json',
-        'E0CCG5S312': '/home/pakambo/Documents/branch1/Adobe_Hackathon/Challenge_1a/Datasets/Output.json/E0CCG5S312.json',
-        'E0H1CM114': '/home/pakambo/Documents/branch1/Adobe_Hackathon/Challenge_1a/Datasets/Output.json/E0H1CM114.json',
-        'TOPJUMP-PARTY-INVITATION-20161003-V01': '/home/pakambo/Documents/branch1/Adobe_Hackathon/Challenge_1a/Datasets/Output.json/TOPJUMP-PARTY-INVITATION-20161003-V01.json'
-    }
-    
-    gt_file = ground_truth_files.get(pdf_name)
-    if gt_file and os.path.exists(gt_file):
-        with open(gt_file, 'r') as f:
-            return json.load(f)
-    return {"title": "", "outline": []}
+def load_ground_truths(gt_dir):
+    """Loads all ground truth JSON files from a directory."""
+    ground_truths = {}
+    if not os.path.isdir(gt_dir):
+        return {}
+        
+    for filename in os.listdir(gt_dir):
+        if filename.endswith('.json'):
+            pdf_name = os.path.splitext(filename)[0]
+            with open(os.path.join(gt_dir, filename), 'r') as f:
+                ground_truths[pdf_name] = json.load(f)
+    return ground_truths
 
 def normalize_text(text):
     """Normalize text for comparison"""
@@ -42,8 +40,8 @@ def normalize_text(text):
 
 def calculate_metrics(predicted, ground_truth):
     """Calculate precision, recall, and F1 score using fuzzy matching"""
-    pred_items = [normalize_text(item['text']) for item in predicted.get('outline', [])]
-    gt_items = [normalize_text(item['text']) for item in ground_truth.get('outline', [])]
+    pred_items = {normalize_text(item['text']): item['page'] for item in predicted.get('outline', [])}
+    gt_items = {normalize_text(item['text']): item['page'] for item in ground_truth.get('outline', [])}
     
     if not gt_items and not pred_items:
         return 1.0, 1.0, 1.0
@@ -55,320 +53,259 @@ def calculate_metrics(predicted, ground_truth):
         return 0.0, 0.0, 0.0
     
     # Use fuzzy matching for better comparison
-    matches = 0
-    for gt_text in gt_items:
+    true_positives = 0
+    
+    # Create a set of predicted items for faster lookup
+    pred_set = set(pred_items.keys())
+    
+    for gt_text, gt_page in gt_items.items():
         best_match_ratio = 0
-        for pred_text in pred_items:
+        best_match_text = None
+        
+        # Find the best matching predicted text
+        for pred_text in pred_set:
             ratio = difflib.SequenceMatcher(None, gt_text.lower(), pred_text.lower()).ratio()
             if ratio > best_match_ratio:
                 best_match_ratio = ratio
+                best_match_text = pred_text
         
-        if best_match_ratio >= 0.6:  # 60% similarity threshold
-            matches += 1
-    
-    precision = matches / len(pred_items) if pred_items else 0
-    recall = matches / len(gt_items) if gt_items else 0
+        # If a good match is found, check if the page number is also correct
+        if best_match_ratio >= 0.8:  # Stricter 80% similarity threshold
+            if abs(pred_items[best_match_text] - gt_page) <= 1: # Allow for off-by-one page errors
+                true_positives += 1
+                # Remove the matched item to prevent it from being matched again
+                pred_set.remove(best_match_text)
+
+    precision = true_positives / len(pred_items) if pred_items else 0
+    recall = true_positives / len(gt_items) if gt_items else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
     
     return precision, recall, f1
 
-def test_all_approaches():
-    """Test ML-enhanced vs improved approaches"""
-    
-    print("🚀 COMPREHENSIVE PDF OUTLINE EXTRACTOR PERFORMANCE TEST")
-    print("=" * 80)
-    
-    # Create output directory with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"test_outputs_{timestamp}"
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"📁 Creating output directory: {output_dir}")
-    
-    # Test PDFs
-    test_pdfs = [
-        ('STEMPathwaysFlyer', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/STEMPathwaysFlyer.pdf'),
-        ('E0CCG5S239', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/E0CCG5S239.pdf'),
-        ('E0CCG5S312', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/E0CCG5S312.pdf'),
-        ('E0H1CM114', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/E0H1CM114.pdf'),
-        ('TOPJUMP-PARTY-INVITATION-20161003-V01', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/TOPJUMP-PARTY-INVITATION-20161003-V01.pdf')
-    ]
-    
-    # Additional test PDFs without ground truth
-    additional_pdfs = [
-        ('sample', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/sample.pdf'),
-        ('Breakfast Ideas', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/Breakfast Ideas.pdf'),
-        ('South of France - Cities', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/South of France - Cities.pdf'),
-        ('Learn Acrobat - Create and Convert_1', '/home/pakambo/Documents/branch1/Adobe_Hackathon/test2/pdfs/Learn Acrobat - Create and Convert_1.pdf'),
-    ]
-    
-    # Initialize extractors
+def save_output(data, output_dir, pdf_name, approach):
+    """Saves the output of an extractor to a JSON file."""
+    output_path = os.path.join(output_dir, f"{pdf_name}_{approach}.json")
+    with open(output_path, 'w') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def run_test(name, extractor, pdf_path, gt_outline, output_dir, pdf_name, approach_key, results):
+    """Runs a test for a single extractor and PDF."""
+    print(f"\n🔧 {name}:")
+    start_time = time.time()
     try:
-        ml_extractor = MLEnhancedPDFExtractor(model_path='enhanced_model.pkl', use_ml=True)
-        print("✅ ML-Enhanced extractor loaded")
+        predicted = extractor.extract_outline_json(pdf_path)
+        duration = time.time() - start_time
+        
+        save_output(predicted, output_dir, pdf_name, approach_key)
+        
+        count = len(predicted.get('outline', []))
+        print(f"   ⏱️  Time: {duration:.2f}s")
+        print(f"   🎯 Found: {count} headings")
+        print(f"   💾 Saved to: {os.path.join(output_dir, f'{pdf_name}_{approach_key}.json')}")
+        
+        precision, recall, f1 = calculate_metrics(predicted, gt_outline)
+        print(f"   📊 P: {precision:.3f}, R: {recall:.3f}, F1: {f1:.3f}")
+        
+        results[pdf_name][approach_key] = {
+            'f1': f1, 'precision': precision, 'recall': recall,
+            'count': count, 'time': duration
+        }
+        results[pdf_name]['gt_count'] = len(gt_outline.get('outline', []))
+        
     except Exception as e:
-        print(f"⚠️  ML-Enhanced extractor failed to load: {e}")
-        ml_extractor = None
+        print(f"   ❌ ERROR: {e}")
+
+def generate_summary_report(results, output_dir):
+    """Generates a summary report of the test results."""
+    report_lines = []
     
-    improved_extractor = ImprovedPDFExtractor()
-    print("✅ Improved extractor loaded")
+    # Header
+    report_lines.append(f"{'PDF Name':<35} {'Improved F1':<10} {'ML-Enhanced F1':<15} {'GT Count':<10} {'Winner':<10}")
+    report_lines.append("-" * 80)
     
-    all_results = []
-    all_outputs = {}
+    improved_scores = []
+    ml_scores = []
     
-    # Test PDFs with ground truth
-    print("\n📊 TESTING PDFs WITH GROUND TRUTH")
-    print("=" * 80)
-    
-    all_pdfs = test_pdfs + additional_pdfs
-    
-    for pdf_name, pdf_path in all_pdfs:
-        if not os.path.exists(pdf_path):
-            print(f"⚠️  PDF not found: {pdf_path}")
-            continue
+    for pdf_name, result in results.items():
+        improved_f1 = result.get('improved', {}).get('f1', 0.0)
+        ml_f1 = result.get('ml_enhanced', {}).get('f1', 0.0)
+        gt_count = result.get('gt_count', 0)
         
-        print(f"\n📄 TESTING: {pdf_name}")
-        print("-" * 60)
+        # Determine winner
+        winner = "Tie"
+        if improved_f1 > ml_f1:
+            winner = "Improved"
+        elif ml_f1 > improved_f1:
+            winner = "ML-Enhanced"
         
-        try:
-            # Get ground truth (if available)
-            ground_truth = load_ground_truth(pdf_name)
-            gt_count = len(ground_truth.get('outline', []))
-            has_ground_truth = gt_count > 0 or pdf_name in ['E0CCG5S239']  # E0CCG5S239 has valid GT with 0 items
-            
-            if has_ground_truth:
-                print(f"📋 Ground Truth: {gt_count} items")
-            else:
-                print(f"📋 No ground truth available")
-            
-            results = {'pdf_name': pdf_name, 'gt_count': gt_count, 'has_ground_truth': has_ground_truth}
-            pdf_outputs = {'pdf_name': pdf_name, 'pdf_path': pdf_path}
-            
-            # Save ground truth if available
-            if has_ground_truth:
-                gt_file = os.path.join(output_dir, f"{pdf_name}_ground_truth.json")
-                with open(gt_file, 'w') as f:
-                    json.dump(ground_truth, f, indent=2, ensure_ascii=False)
-                pdf_outputs['ground_truth'] = ground_truth
-            
-            # Test Improved approach (rule-based)
-            print("\n🔧 Improved Extractor (Advanced Rule-based):")
-            start_time = time.time()
-            improved_predicted = improved_extractor.extract_outline_json(pdf_path)
-            improved_time = time.time() - start_time
-            
-            # Save improved output
-            improved_file = os.path.join(output_dir, f"{pdf_name}_improved.json")
-            with open(improved_file, 'w') as f:
-                json.dump(improved_predicted, f, indent=2, ensure_ascii=False)
-            pdf_outputs['improved'] = improved_predicted
-            
-            improved_count = len(improved_predicted.get('outline', []))
-            print(f"   ⏱️  Time: {improved_time:.2f}s")
-            print(f"   🎯 Found: {improved_count} headings")
-            print(f"   💾 Saved to: {improved_file}")
-            
-            if has_ground_truth:
-                improved_precision, improved_recall, improved_f1 = calculate_metrics(improved_predicted, ground_truth)
-                print(f"   📊 P: {improved_precision:.3f}, R: {improved_recall:.3f}, F1: {improved_f1:.3f}")
-                results['improved'] = {
-                    'f1': improved_f1, 'precision': improved_precision, 'recall': improved_recall,
-                    'count': improved_count, 'time': improved_time
-                }
-            
-            # Test ML approach
-            if ml_extractor:
-                print("\n🤖 ML-Enhanced Approach:")
-                start_time = time.time()
-                ml_predicted = ml_extractor.extract_outline_json(pdf_path)
-                ml_time = time.time() - start_time
-                
-                # Save ML output
-                ml_file = os.path.join(output_dir, f"{pdf_name}_ml_enhanced.json")
-                with open(ml_file, 'w') as f:
-                    json.dump(ml_predicted, f, indent=2, ensure_ascii=False)
-                pdf_outputs['ml_enhanced'] = ml_predicted
-                
-                ml_count = len(ml_predicted.get('outline', []))
-                print(f"   ⏱️  Time: {ml_time:.2f}s")
-                print(f"   🎯 Found: {ml_count} headings")
-                print(f"   💾 Saved to: {ml_file}")
-                
-                if has_ground_truth:
-                    ml_precision, ml_recall, ml_f1 = calculate_metrics(ml_predicted, ground_truth)
-                    print(f"   📊 P: {ml_precision:.3f}, R: {ml_recall:.3f}, F1: {ml_f1:.3f}")
-                    results['ml'] = {
-                        'f1': ml_f1, 'precision': ml_precision, 'recall': ml_recall,
-                        'count': ml_count, 'time': ml_time
-                    }
-            
-            # Show best performer for PDFs with ground truth
-            if has_ground_truth:
-                f1_scores = [('Improved', results.get('improved', {}).get('f1', 0))]
-                if ml_extractor and 'ml' in results:
-                    f1_scores.append(('ML-Enhanced', results['ml']['f1']))
-                
-                best_approach, best_f1 = max(f1_scores, key=lambda x: x[1])
-                print(f"\n🏆 Best performer: {best_approach} (F1: {best_f1:.3f})")
-                all_results.append(results)
-            
-            # Store all outputs for this PDF
-            all_outputs[pdf_name] = pdf_outputs
-            
-        except Exception as e:
-            print(f"❌ ERROR: {e}")
-    
-    # Test additional PDFs
-    print(f"\n📁 TESTING ADDITIONAL PDFs (No Ground Truth)")
-    print("=" * 60)
-    
-    for pdf_name, pdf_path in additional_pdfs:
-        if not os.path.exists(pdf_path):
-            continue
-            
-        print(f"\n📄 {pdf_name}:")
+        report_lines.append(f"{pdf_name:<35} {improved_f1:<10.3f} {ml_f1:<15.3f} {gt_count:<10} {winner:<10}")
         
-        # Test all approaches
-        approaches = [
-            ('Improved', improved_extractor)
-        ]
-        if ml_extractor:
-            approaches.append(('ML-Enhanced', ml_extractor))
-        
-        for approach_name, extractor in approaches:
-            try:
-                start_time = time.time()
-                result = extractor.extract_outline_json(pdf_path)
-                elapsed = time.time() - start_time
-                
-                title = result.get('title', 'N/A')
-                outline_count = len(result.get('outline', []))
-                
-                print(f"   {approach_name}: ⏱️  {elapsed:.2f}s | 📋 '{title[:30]}...' | 🎯 {outline_count} headings")
-                
-            except Exception as e:
-                print(f"   {approach_name}: ❌ Error - {e}")
+        improved_scores.append(improved_f1)
+        if ml_f1 > 0:
+            ml_scores.append(ml_f1)
     
-    # Save comprehensive comparison file
-    comparison_file = os.path.join(output_dir, "comprehensive_comparison.json")
-    with open(comparison_file, 'w') as f:
-        json.dump(all_outputs, f, indent=2, ensure_ascii=False)
-    print(f"\n💾 Saved comprehensive comparison to: {comparison_file}")
+    # Calculate averages
+    avg_improved = sum(improved_scores) / len(improved_scores) if improved_scores else 0
+    avg_ml = sum(ml_scores) / len(ml_scores) if ml_scores else 0
     
-    # Create a summary comparison file
-    summary_data = {
-        'test_info': {
-            'timestamp': timestamp,
-            'total_pdfs_tested': len(all_outputs),
-            'pdfs_with_ground_truth': len([p for p in all_outputs.values() if p.get('ground_truth')])
-        },
-        'results': all_results if all_results else []
-    }
+    report_lines.append("-" * 80)
+    ml_avg_str = f"{avg_ml:.3f}" if avg_ml > 0 else "N/A"
+    report_lines.append(f"{'AVERAGE':<35} {avg_improved:<10.3f} {ml_avg_str:<15}")
     
-    summary_file = os.path.join(output_dir, "test_summary.json")
-    with open(summary_file, 'w') as f:
-        json.dump(summary_data, f, indent=2, ensure_ascii=False)
-    print(f"💾 Saved test summary to: {summary_file}")
+    perc_diff = (avg_ml - avg_improved) / avg_improved * 100 if avg_improved > 0 else 0
+    report_lines.append(f"   📊 ML vs Improved: {avg_ml - avg_improved:+.3f} ({perc_diff:+.1f}%)")
     
-    # Create an index file for easy navigation
+    # Print to console
+    print("\n".join(report_lines))
+
+def create_file_index(output_dir):
+    """Creates an index of all generated files in the output directory."""
     index_data = {
         'output_directory': output_dir,
-        'created_at': timestamp,
+        'created_at': datetime.now().strftime("%Y%m%d_%H%M%S"),
         'files_generated': []
     }
     
-    for pdf_name in all_outputs.keys():
-        pdf_files = {
-            'pdf_name': pdf_name,
-            'files': []
-        }
-        
-        # Check which files were created for this PDF
-        for approach in ['ground_truth', 'improved', 'ml_enhanced']:
-            filename = f"{pdf_name}_{approach}.json"
-            filepath = os.path.join(output_dir, filename)
-            if os.path.exists(filepath):
-                pdf_files['files'].append({
-                    'approach': approach,
-                    'filename': filename,
-                    'path': filepath
-                })
-        
-        index_data['files_generated'].append(pdf_files)
+    for file in os.listdir(output_dir):
+        if file.endswith('.json'):
+            file_path = os.path.join(output_dir, file)
+            index_data['files_generated'].append({
+                'filename': file,
+                'path': file_path
+            })
     
-    index_file = os.path.join(output_dir, "index.json")
-    with open(index_file, 'w') as f:
+    index_path = os.path.join(output_dir, "index.json")
+    with open(index_path, 'w') as f:
         json.dump(index_data, f, indent=2, ensure_ascii=False)
-    print(f"💾 Saved file index to: {index_file}")
-    
-    # Summary
-    if all_results:
-        print(f"\n{'='*70}")
-        print("📊 SUMMARY REPORT")
-        print(f"{'='*70}")
-        
-        print(f"{'PDF':<35} {'Improved':<10} {'ML-Enh':<10} {'GT':<5} {'Winner':<12}")
-        print("-" * 70)
-        
-        improved_scores = []
-        ml_scores = []
-        
-        for result in all_results:
-            pdf_name = result['pdf_name']
-            gt_count = result['gt_count']
-            
-            improved_f1 = result.get('improved', {}).get('f1', 0.0)
-            ml_f1 = result.get('ml', {}).get('f1', 0.0)
-            
-            # Determine winner
-            scores = [('Improved', improved_f1)]
-            if ml_f1 > 0:
-                scores.append(('ML-Enh', ml_f1))
-            
-            winner, best_score = max(scores, key=lambda x: x[1])
-            
-            ml_str = f"{ml_f1:.3f}" if ml_f1 > 0 else "N/A"
-            
-            print(f"{pdf_name:<35} {improved_f1:<10.3f} {ml_str:<10} {gt_count:<5} {winner:<12}")
-            
-            improved_scores.append(improved_f1)
-            if ml_f1 > 0:
-                ml_scores.append(ml_f1)
-        
-        # Calculate averages
-        avg_improved = sum(improved_scores) / len(improved_scores) if improved_scores else 0
-        avg_ml = sum(ml_scores) / len(ml_scores) if ml_scores else 0
-        
-        print("-" * 70)
-        ml_avg_str = f"{avg_ml:.3f}" if avg_ml > 0 else "N/A"
-        print(f"{'AVERAGE':<35} {avg_improved:<10.3f} {ml_avg_str:<10}")
-        
-        print(f"\n🎯 OVERALL RESULTS:")
-        print(f"   🔧 Improved F1:    {avg_improved:.3f}")
-        if avg_ml > 0:
-            print(f"   🤖 ML-Enhanced F1: {avg_ml:.3f}")
-        
-        # Determine overall winner
-        final_scores = [('Improved', avg_improved)]
-        if avg_ml > 0:
-            final_scores.append(('ML-Enhanced', avg_ml))
-        
-        overall_winner, overall_best = max(final_scores, key=lambda x: x[1])
-        print(f"\n🏆 OVERALL WINNER: {overall_winner} (F1: {overall_best:.3f})")
-        
-        # Show improvements
-        if avg_ml > 0 and avg_improved > 0:
-            ml_vs_improved = avg_ml - avg_improved
-            print(f"   📊 ML vs Improved: {ml_vs_improved:+.3f} ({(ml_vs_improved/avg_improved*100):+.1f}%)")
-    
-    print(f"\n✅ Performance test completed!")
-    print(f"📁 All outputs saved in directory: {output_dir}")
-    print(f"📋 Check {index_file} for a complete list of generated files")
-    
-    return output_dir
+    print(f"💾 Saved file index to: {index_path}")
 
-def test_both_approaches():
-    """Legacy function - redirect to new comprehensive test"""
-    test_all_approaches()
+def main():
+    """Main function to run the comprehensive test suite."""
+    print("🚀 COMPREHENSIVE PDF OUTLINE EXTRACTOR PERFORMANCE TEST")
+    print("=" * 80)
+    
+    # Create a unique output directory for this test run
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(os.path.dirname(__file__), f"test_outputs_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"📁 Creating output directory: {output_dir}")
+    
+    # Find the latest model file
+    model_files = [f for f in os.listdir(os.path.dirname(__file__)) if f.endswith('_rf_model.pkl')]
+    if model_files:
+        latest_model = max(model_files, key=lambda f: os.path.getmtime(os.path.join(os.path.dirname(__file__), f)))
+        model_path = os.path.join(os.path.dirname(__file__), latest_model)
+        print(f"✅ Using latest model: {model_path}")
+    else:
+        model_path = "enhanced_model.pkl" # Fallback to default
+        print(f"⚠️  No new model file found, using default: {model_path}")
+
+    # Load extractors
+    if model_path and os.path.exists(model_path):
+        try:
+            ml_extractor = MLEnhancedPDFExtractor(model_path=model_path)
+            print("✅ ML-Enhanced extractor loaded")
+        except Exception as e:
+            print(f"⚠️  Could not load ML-Enhanced extractor: {e}")
+            ml_extractor = None
+    else:
+        ml_extractor = None
+
+    try:
+        improved_extractor = ImprovedPDFExtractor()
+        print("✅ Improved extractor loaded")
+    except Exception as e:
+        print(f"⚠️  Could not load Improved extractor: {e}")
+        improved_extractor = None
+
+    # Load ground truth data
+    ground_truth_dir = os.path.join(os.path.dirname(__file__), '..', 'Challenge_1a', 'Datasets', 'Output.json')
+    ground_truths = load_ground_truths(ground_truth_dir)
+    
+    # PDF directory
+    pdf_dir = os.path.join(os.path.dirname(__file__), 'pdfs')
+    
+    # Results
+    results = defaultdict(dict)
+    
+    print("\n📊 TESTING PDFs WITH GROUND TRUTH")
+    print("=" * 80)
+    
+    # Test PDFs with ground truth
+    for pdf_name, gt_outline in ground_truths.items():
+        pdf_path = os.path.join(pdf_dir, f"{pdf_name}.pdf")
+        if not os.path.exists(pdf_path):
+            continue
+            
+        print(f"\n📄 TESTING: {pdf_name}")
+        print("-" * 60)
+        print(f"📋 Ground Truth: {len(gt_outline.get('outline', []))} items")
+
+        # Test Improved Extractor
+        if improved_extractor:
+            run_test("Improved Extractor (Advanced Rule-based)", improved_extractor, pdf_path, gt_outline, output_dir, pdf_name, "improved", results)
+
+        # Test ML-Enhanced Extractor
+        if ml_extractor:
+            run_test("ML-Enhanced Approach", ml_extractor, pdf_path, gt_outline, output_dir, pdf_name, "ml_enhanced", results)
+            
+        # Determine winner for this PDF
+        f1_improved = results[pdf_name].get('improved', {}).get('f1', 0)
+        f1_ml = results[pdf_name].get('ml_enhanced', {}).get('f1', 0)
+        
+        if f1_improved > f1_ml:
+            results[pdf_name]['winner'] = 'Improved'
+            print(f"\n🏆 Best performer: Improved (F1: {f1_improved:.3f})")
+        elif f1_ml > f1_improved:
+            results[pdf_name]['winner'] = 'ML-Enhanced'
+            print(f"\n🏆 Best performer: ML-Enhanced (F1: {f1_ml:.3f})")
+        else:
+            results[pdf_name]['winner'] = 'Tie'
+            print(f"\n🏆 It's a tie (F1: {f1_ml:.3f})")
+
+    # Test additional PDFs without ground truth
+    print("\n📁 TESTING ADDITIONAL PDFs (No Ground Truth)")
+    print("=" * 80)
+    
+    additional_pdfs = [f for f in os.listdir(pdf_dir) if f.endswith('.pdf') and os.path.splitext(f)[0] not in ground_truths]
+    
+    for pdf_name in additional_pdfs:
+        pdf_path = os.path.join(pdf_dir, pdf_name)
+        pdf_base_name = os.path.splitext(pdf_name)[0]
+        
+        print(f"\n📄 {pdf_base_name}:")
+        
+        # Run Improved Extractor
+        if improved_extractor:
+            start_time = time.time()
+            extracted_obj = improved_extractor.extract_outline_json(pdf_path)
+            duration = time.time() - start_time
+            title = extracted_obj.get('title', 'N/A')
+            num_headings = len(extracted_obj.get('outline', []))
+            print(f"   Improved: ⏱️  {duration:.2f}s | 📋 '{title[:30]}...' | 🎯 {num_headings} headings")
+            save_output(extracted_obj, output_dir, pdf_base_name, "improved")
+
+        # Run ML-Enhanced Extractor
+        if ml_extractor:
+            start_time = time.time()
+            extracted_obj = ml_extractor.extract_outline_json(pdf_path)
+            duration = time.time() - start_time
+            title = extracted_obj.get('title', 'N/A')
+            num_headings = len(extracted_obj.get('outline', []))
+            print(f"   ML-Enhanced: ⏱️  {duration:.2f}s | 📋 '{title[:30]}...' | 🎯 {num_headings} headings")
+            save_output(extracted_obj, output_dir, pdf_base_name, "ml_enhanced")
+
+    # Save comprehensive comparison
+    comparison_path = os.path.join(output_dir, "comprehensive_comparison.json")
+    with open(comparison_path, 'w') as f:
+        json.dump(results, f, indent=4)
+    print(f"\n💾 Saved comprehensive comparison to: {comparison_path}")
+
+    # Generate and print summary report
+    generate_summary_report(results, output_dir)
+
+    # Create an index of all generated files
+    create_file_index(output_dir)
 
 if __name__ == "__main__":
-    test_all_approaches()
+    main()

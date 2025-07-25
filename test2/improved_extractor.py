@@ -72,11 +72,37 @@ class ImprovedPDFExtractor:
             'page_count': page_count,
             'avg_blocks_per_page': total_blocks / sample_pages,
             'common_font_sizes': font_size_counter.most_common(5),
-            'is_complex_document': total_blocks / sample_pages > 20,  # Many blocks = complex
-            'has_toc': self._likely_has_toc()
+            'is_complex_document': total_blocks / sample_pages > 25,  # Increased threshold
+            'has_toc': self._likely_has_toc(),
+            'doc_type': 'unknown' # To be determined
         }
         
+        # Determine document type
+        self.doc_characteristics['doc_type'] = self._determine_document_type()
+        
         print(f"📊 Document characteristics: {self.doc_characteristics}")
+    
+    def _determine_document_type(self):
+        """Determine document type for more tailored processing."""
+        text_sample = ""
+        for page_num in range(min(3, len(self.doc))): # Sample more pages
+            text_sample += self.doc[page_num].get_text().lower()
+
+        # Form detection (more robust)
+        form_keywords = ['date', 'name', 'signature', 's.no', 'serial', 'amount', 'total', 'form', 'application', 'invoice', 'bill to', 'ship to']
+        if sum(1 for keyword in form_keywords if keyword in text_sample) >= 2 or text_sample.count('___') > 3:
+            return 'form'
+
+        # Academic paper/report detection
+        academic_keywords = ['abstract', 'introduction', 'references', 'methodology', 'conclusion', 'figure', 'table', 'acknowledgments']
+        if sum(1 for keyword in academic_keywords if keyword in text_sample) >= 3:
+            return 'academic'
+            
+        # Presentation detection (fewer blocks, larger fonts)
+        if self.doc_characteristics['avg_blocks_per_page'] < 12 and self.doc_characteristics['common_font_sizes'] and self.doc_characteristics['common_font_sizes'][0][0] > 18:
+            return 'presentation'
+
+        return 'general'
     
     def _likely_has_toc(self):
         """Check if document likely has a table of contents."""
@@ -448,29 +474,29 @@ class ImprovedPDFExtractor:
             (r'^[A-Z]\.\s+[A-Z]', 4),         # "A. Title"
             (r'^\([a-z]\)\s+[A-Z]', 3),       # "(a) Item"
             (r'^\d+\)\s+[A-Z]', 3),           # "1) Item"
-            (r'^[IVX]+\.\s+[A-Z]', 4),        # "I. Roman numerals"
+            (r'^[IVXLC]+\.\s+[A-Z]', 4),        # "I. Roman numerals"
         ]
         
         for pattern, points in numbering_patterns:
             if re.match(pattern, text):
-                return points  # Return immediately for numbered sections
+                return points + 1  # Extra bonus for numbered sections
         
         # Case and formatting patterns
         if text.isupper() and word_count >= 2:
-            score += min(4, word_count // 2 + 1)
+            score += min(4, word_count // 2 + 1.5)
         elif text.istitle() and word_count >= 2:
-            score += min(3, word_count // 3 + 1)
-        elif len(text) > 1 and text[0].isupper():
-            score += 1
+            score += min(3, word_count // 3 + 1.5)
+        elif len(text) > 1 and text[0].isupper() and word_count < 5: # Only for short phrases
+            score += 0.5
         
         # Structural keywords (context-aware)
         keyword_patterns = [
             # High-value structural indicators
-            (r'\b(chapter|section|part|appendix|introduction|conclusion|summary|overview|abstract)\b', 4),
-            (r'\b(background|methodology|results|discussion|references|acknowledgments|bibliography)\b', 3),
-            (r'\b(preface|foreword|epilogue|index|glossary|table\s+of\s+contents)\b', 3),
+            (r'\b(chapter|section|part|appendix|introduction|conclusion|summary|overview|abstract)\b', 5),
+            (r'\b(background|methodology|results|discussion|references|acknowledgments|bibliography)\b', 4),
+            (r'\b(preface|foreword|epilogue|index|glossary|table\s+of\s+contents)\b', 4),
             # Document-specific patterns
-            (r'\b(phase\s+[ivx\d]+|step\s+\d+|stage\s+\d+)\b', 3),
+            (r'\b(phase\s+[ivxlc\d]+|step\s+\d+|stage\s+\d+)\b', 3),
             (r'\b(appendix\s+[a-z]|figure\s+\d+|table\s+\d+)\b', 2),
         ]
         
@@ -481,14 +507,14 @@ class ImprovedPDFExtractor:
         
         # Question headings
         if text.endswith('?') and word_count >= 3:
-            score += 2
+            score += 2.5
         
         # Colon endings (selective)
         if text.endswith(':') and word_count >= 2:
             if not any(text_lower.startswith(prefix) for prefix in ['note:', 'tip:', 'warning:', 'example:']):
-                score += 2
+                score += 2.5
         
-        return min(score, 6)  # Cap at 6 points
+        return min(score, 7)  # Cap at 7 points
     
     def _calculate_position_score(self, block, thresholds):
         """Calculate position-based confidence score."""
@@ -511,41 +537,49 @@ class ImprovedPDFExtractor:
         score = 0
         text_lower = text.lower()
         
-        # Form document penalties (like E0CCG5S239)
-        form_indicators = ['date', 'name', 'signature', 's.no', 'serial', 'amount', 'total']
-        if any(indicator in text_lower for indicator in form_indicators) and len(text) < 20:
-            score -= 3
+        # Form document penalties
+        if self.doc_characteristics['doc_type'] == 'form':
+            form_indicators = ['date', 'name', 'signature', 's.no', 'serial', 'amount', 'total']
+            if any(indicator in text_lower for indicator in form_indicators) and len(text) < 30:
+                score -= 5 # Stronger penalty
         
-        # Technical document bonuses
-        tech_indicators = ['system', 'process', 'method', 'approach', 'framework', 'model']
-        if any(indicator in text_lower for indicator in tech_indicators):
-            score += 0.5
+        # Academic/Technical document bonuses
+        if self.doc_characteristics['doc_type'] in ['academic', 'general']:
+            tech_indicators = ['system', 'process', 'method', 'approach', 'framework', 'model', 'algorithm', 'design', 'architecture']
+            if any(indicator in text_lower for indicator in tech_indicators):
+                score += 1.5 # Stronger bonus
         
         return score
     
     def _calculate_dynamic_threshold(self, thresholds, confidence_factors):
         """Calculate dynamic threshold based on document characteristics and confidence factors."""
-        base_threshold = 4.0  # Starting point
+        base_threshold = 4.5  # Increased starting point for better precision
         
-        # Adjust based on document complexity
+        # Adjust based on document complexity and type
         if self.doc_characteristics['is_complex_document']:
-            base_threshold += 1.0
+            base_threshold += 1.5
+        if self.doc_characteristics['doc_type'] == 'form':
+            base_threshold += 2.5 # Be even more strict with forms
+        if self.doc_characteristics['doc_type'] == 'academic':
+            base_threshold -= 1.0 # More lenient with academic papers
         
         # Adjust based on font variation
         if not thresholds['has_good_variation']:
-            base_threshold -= 1.0
+            base_threshold -= 1.5 # If only bold/not bold is an indicator, be more lenient
         
         # Adjust based on confidence factors
         strong_indicators = sum(1 for factor in ['very_large_font', 'bold', 'strong_structure'] 
                               if factor in confidence_factors)
         if strong_indicators >= 2:
-            base_threshold -= 0.5
-        
+            base_threshold -= 2.5 # Strong reduction for very confident headings
+        elif strong_indicators == 1:
+            base_threshold -= 1.5
+
         # Document type adjustments
-        if thresholds['unique_sizes'] < 3:
-            base_threshold -= 0.5
+        if thresholds['unique_sizes'] < 4:
+            base_threshold -= 1.0
         
-        return max(base_threshold, 2.0)  # Minimum threshold of 2.0
+        return max(base_threshold, 3.5)  # Increased minimum threshold
     
     def _is_obviously_not_heading_strict(self, text):
         """Enhanced filtering with document-aware logic to prevent false positives."""
@@ -554,7 +588,7 @@ class ImprovedPDFExtractor:
         # Regex patterns for obvious non-headings
         non_heading_patterns = [
             r'^\d{1,4}$',                                    # Just numbers
-            r'^page\s+\d+',                                  # Page numbers
+            r'^(page|figure|table)\s+\d+',                   # Page numbers and labels
             r'^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}',          # Dates
             r'^https?:\/\/',                                 # URLs
             r'^www\.',                                       # Web addresses
@@ -581,7 +615,7 @@ class ImprovedPDFExtractor:
             return True
         
         # Form field patterns with colons or parentheses
-        if len(text) < 15 and any(field in text_lower for field in form_fields):
+        if len(text) < 20 and any(field in text_lower for field in form_fields):
             return True
         
         # Navigation and UI elements
@@ -598,7 +632,8 @@ class ImprovedPDFExtractor:
         single_word_excludes = {
             'goals', 'applied', 'science', 'math', 'technology', 'computer',
             'family', 'consumer', 'regular', 'distinction', 'total', 'amount',
-            'date', 'time', 'location', 'contact', 'email', 'phone'
+            'date', 'time', 'location', 'contact', 'email', 'phone', 'note',
+            'figure', 'table', 'appendix', 'chapter', 'section', 'page', 'form'
         }
         
         clean_text = text_lower.strip().rstrip(':').rstrip('.')
@@ -607,7 +642,7 @@ class ImprovedPDFExtractor:
         
         # Sentence-like text detection (improved)
         words = text_lower.split()
-        if len(words) > 5:
+        if len(words) > 4: # Stricter check for shorter phrases
             # Common sentence words
             sentence_words = {
                 'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 
@@ -620,7 +655,7 @@ class ImprovedPDFExtractor:
             sentence_ratio = sentence_word_count / len(words)
             
             # Dynamic threshold based on text length
-            threshold = max(0.25, 0.4 - (len(words) / 40))
+            threshold = max(0.3, 0.5 - (len(words) / 30))
             if sentence_ratio > threshold:
                 return True
         
@@ -631,15 +666,15 @@ class ImprovedPDFExtractor:
             'while ', 'when ', 'where ', 'whether ', 'if ', 'unless '
         ]
         
-        if len(text) > 30 and any(text_lower.startswith(starter) for starter in descriptive_starters):
+        if len(text) > 25 and any(text_lower.startswith(starter) for starter in descriptive_starters):
             return True
         
         # Sentence structure indicators
-        if text.count('.') > 1 or (': ' in text and len(text) > 50):
+        if text.count('.') > 1 or (': ' in text and len(text) > 40) or text.endswith(','):
             return True
         
         # Starts with lowercase (likely continuation)
-        if len(text) > 1 and text[0].islower():
+        if len(text) > 1 and text[0].islower() and not text.istitle():
             return True
         
         # Common verb patterns in sentences

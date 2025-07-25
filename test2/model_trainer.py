@@ -27,18 +27,21 @@ class OutlineModelTrainer:
         X = df[self.feature_names]
         y = df[label_column]
 
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
 
         # Define hyperparameter grid
         param_grid = {
-            'n_estimators': [100, 200],
-            'max_depth': [None, 10, 20],
-            'min_samples_split': [2, 5],
-            'max_features': ['sqrt', 'log2', None]
+            'n_estimators': [100, 200, 300],
+            'max_depth': [10, 20, 30, None],
+            'min_samples_split': [2, 5, 10],
+            'min_samples_leaf': [1, 2, 4],
+            'max_features': ['sqrt', 'log2'],
+            'class_weight': ['balanced', 'balanced_subsample'],
+            'bootstrap': [True, False]
         }
 
         rf = RandomForestClassifier(random_state=42)
-        grid_search = GridSearchCV(rf, param_grid, cv=3, n_jobs=-1, scoring='f1')
+        grid_search = GridSearchCV(rf, param_grid, cv=5, n_jobs=-1, scoring='f1_weighted', verbose=1)
         grid_search.fit(X_train, y_train)
 
         self.model = grid_search.best_estimator_
@@ -47,6 +50,13 @@ class OutlineModelTrainer:
 
         y_pred = self.model.predict(X_val)
         print("\n📋 Classification Report:\n", classification_report(y_val, y_pred))
+        
+        # Feature importance
+        feature_importance = pd.DataFrame({
+            'feature': self.feature_names,
+            'importance': self.model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        print("\n📊 Feature Importance:\n", feature_importance)
 
         return self.model
 
@@ -75,14 +85,21 @@ if __name__ == "__main__":
 
     # Define feature list manually
     selected_features = [
-        'relative_font_size', 'is_bold', 'is_title_case',
-        'ends_with_punct', 'starts_with_number', 'has_colon',
-        'capital_ratio', 'relative_y', 'length_norm',
-        'line_density', 'prev_spacing', 'next_spacing'
+        'relative_font_size', 'is_bold', 'is_title_case', 'ends_with_punct',
+        'starts_with_number', 'has_colon', 'capital_ratio', 'relative_y',
+        'length_norm', 'line_density', 'prev_spacing', 'next_spacing',
+        'is_all_caps', 'word_count', 'is_centered',
+        'font_variation', 'position_score', 'structure_score', 'semantic_score'
     ]
 
     # Load data
     df = pd.read_excel(file_path)
+
+    # Ensure all features are present, fill missing with 0
+    for feature in selected_features:
+        if feature not in df.columns:
+            print(f"⚠️  Feature '{feature}' not found in data, adding as 0.")
+            df[feature] = 0
 
     trainer = OutlineModelTrainer(feature_names=selected_features)
     model = trainer.train(df)

@@ -3,51 +3,47 @@
 This folder contains the optimized ML-enhanced PDF outline extraction system for Challenge 1A.
 
 ## 🎯 Performance Results
-- **ML-Enhanced F1 Score: 0.522**
-- **Improved Extractor F1 Score: 0.474** 
-- **ML vs Improved: +10.2%**
+- **ML-Enhanced F1 Score: 0.790**
+- **Improved Extractor F1 Score: 0.433** 
+- **ML vs Improved: +82.6%**
 
 ## 📁 File Structure
 
-### Core Extractors
-- **`ml_enhanced_extractor.py`** - Main ML-enhanced extractor (best performance)
-- **`improved_extractor.py`** - Rule-based fallback extractor for Challenge 1A compliance
+### Core Components
+- **`ml_enhanced_extractor.py`**: The main entry point for the ML-enhanced outline extraction. It integrates the feature extractor and the trained model to provide the final outline.
+- **`improved_extractor.py`**: A purely rule-based extractor, which serves as a baseline for comparison.
+- **`pdf_feature_extractor.py`**: A dedicated module for extracting a rich set of features from PDF documents, which are then used by the ML model.
 
-### ML Components
-- **`enhanced_model.pkl`** - Trained Random Forest model
-- **`Training_data.xlsx`** - Training data for ML model
-- **`model_trainer.py`** - Model training utilities
-- **`pdf_feature_extractor.py`** - Feature extraction for ML
-- **`outline_predictor.py`** - ML prediction interface
+### Machine Learning
+- **`Training_data_rf_model.pkl`**: The pre-trained Random Forest classifier that powers the ML-enhanced extractor.
+- **`model_trainer.py`**: The script used to train the Random Forest model. It includes hyperparameter tuning using GridSearchCV to find the best model configuration.
+- **`generate_training_data.py`**: A utility script to create the training dataset (`Training_data.xlsx`) from a directory of PDFs and their corresponding ground truth JSON files.
 
-### Main Interface & Testing
-- **`main.py`** - CLI interface for the complete ML pipeline ⭐ **MAIN SUBMISSION SCRIPT**
-- **`test_ml_enhanced.py`** - Comprehensive test script comparing ML-enhanced vs improved approaches
+### Testing and Evaluation
+- **`test_ml_enhanced.py`**: A comprehensive test suite to evaluate and compare the performance of the ML-enhanced and improved extractors. It calculates precision, recall, and F1 scores and generates a detailed report.
+- **`pdfs/`**: A directory containing a variety of PDF files used for testing and evaluation.
+- **`test_outputs_.../`**: Directories where the output of the test script is saved, including the extracted outlines in JSON format and a summary report.
 
-### Test Data
-- **`pdfs/`** - Collection of test PDF files from Challenge 1A and 1B
 
 ## 🚀 Usage
 
-### Quick Test (Recommended)
+To evaluate the performance of the extractors, simply run the test script:
+
 ```bash
 python test_ml_enhanced.py
 ```
-*Compares ML-enhanced vs improved extractor approaches with detailed metrics*
 
-### CLI Interface
-```bash
-# Extract features from PDF
-python main.py extract path/to/file.pdf --output features.csv
+This will:
+1.  Load the pre-trained ML model.
+2.  Run both the ML-enhanced and the improved rule-based extractors on a set of test PDFs.
+3.  Calculate and display a detailed performance comparison, including F1 scores.
+4.  Save the extracted outlines and a summary report in a new `test_outputs_...` directory.
 
-# Train new model
-python main.py train Training_data.xlsx --save_model new_model.pkl
+To retrain the model:
+1.  Ensure you have ground truth JSON files in the `Challenge_1a/Datasets/Output.json` directory.
+2.  Run the training data generator: `python generate_training_data.py pdfs/ ../Challenge_1a/Datasets/Output.json/ Training_data.xlsx`
+3.  Run the model trainer: `python model_trainer.py Training_data.xlsx`
 
-# Predict outlines
-python main.py predict path/to/file.pdf enhanced_model.pkl --threshold 0.6
-```
-
-### Direct Usage
 ```python
 from ml_enhanced_extractor import MLEnhancedPDFExtractor
 
