@@ -121,6 +121,6 @@ def generate_training_data(input_dir, output_dir):
             print(f"Features extracted for {pdf_file.name}, saved to {output_file}")
 
 if __name__ == "__main__":
-    input_dir = "input_pdfs"  # Directory containing PDFs
+    input_dir = "pdfs"  # Directory containing PDFs
     output_dir = "training_data"  # Directory to save Excel files
     generate_training_data(input_dir, output_dir)

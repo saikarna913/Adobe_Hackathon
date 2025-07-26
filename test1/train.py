@@ -6,6 +6,7 @@ from imblearn.over_sampling import SMOTE
 import joblib
 import sys
 import os
+import numpy as np
 
 class OutlineModelTrainer:
     def __init__(self, feature_names):
@@ -15,7 +16,26 @@ class OutlineModelTrainer:
         )
         self.label_map = {0: "title", 1: "H1", 2: "H2", 3: "H3", 4: "H4", 5: "paragraph"}
 
+    def sample_paragraphs(self, df, label_column="label"):
+        """Sample paragraph examples to reduce class imbalance."""
+        # Separate heading/title and paragraph examples
+        df_headings = df[df[label_column] != 5]
+        df_paragraphs = df[df[label_column] == 5]
+        
+        # Sample paragraphs (max 2x number of headings)
+        max_paragraphs = len(df_headings) * 2 if len(df_headings) > 0 else len(df_paragraphs)
+        if len(df_paragraphs) > max_paragraphs:
+            df_paragraphs = df_paragraphs.sample(n=max_paragraphs, random_state=42)
+        
+        # Combine and shuffle
+        df_balanced = pd.concat([df_headings, df_paragraphs]).sample(frac=1, random_state=42)
+        print(f"Sampled dataset distribution:\n{df_balanced[label_column].value_counts()}")
+        return df_balanced
+
     def train(self, df, label_column="label"):
+        # Sample paragraphs to balance dataset
+        df = self.sample_paragraphs(df, label_column)
+        
         X = df[self.feature_names]
         y = df[label_column]
         X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
