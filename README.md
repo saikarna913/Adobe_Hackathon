@@ -1,6 +1,7 @@
 # PDF Outline Extraction Pipeline - Docker Usage Guide
 
 This project provides a robust pipeline for extracting document outlines from PDFs using both machine learning and rule-based approaches. The entire environment is containerized for easy setup and reproducibility.
+Clone the github repo and go to its directory.
 
 ## Setup & Usage (Docker)
 
