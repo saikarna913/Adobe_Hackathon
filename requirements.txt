@@ -1,0 +1,6 @@
+PyMuPDF>=1.22.0
+numpy
+scipy
+pandas
+joblib
+scikit-learn

@@ -3,6 +3,7 @@ import joblib
 import sys
 import os
 import json
+from feature import PDFFeatureExtractor
 
 # Label map must match the training
 label_map = {
@@ -19,9 +20,6 @@ feature_names = [
     'starts_with_number', 'has_colon', 'relative_y', 'length_norm',
     'line_density', 'prev_spacing', 'next_spacing', 'number_depth'
 ]
-
-def load_data(file_path):
-    return pd.read_excel(file_path)
 
 def predict_outline(df, model):
     missing = [feat for feat in feature_names if feat not in df.columns]
@@ -59,19 +57,20 @@ def predict_outline(df, model):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python predict.py <path_to_excel>")
+        print("Usage: python predict.py <path_to_pdf>")
         sys.exit(1)
 
-    input_path = sys.argv[1]
-    if not os.path.exists(input_path):
-        print(f"❌ File not found: {input_path}")
+    pdf_path = sys.argv[1]
+    if not os.path.exists(pdf_path):
+        print(f"❌ File not found: {pdf_path}")
         sys.exit(1)
 
     # Load model
-    model = joblib.load("rf_model.pkl")
+    model = joblib.load(os.path.join(os.path.dirname(__file__), "rf_model.pkl"))
 
-    # Load input data
-    df = load_data(input_path)
+    # Extract features directly from PDF
+    extractor = PDFFeatureExtractor(pdf_path)
+    df, _ = extractor.extract_features()
 
     # Predict and convert to JSON
     result = predict_outline(df, model)

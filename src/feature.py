@@ -109,18 +109,7 @@ class PDFFeatureExtractor:
         df["label"] = -1  # -1 indicates unlabeled
         return df, title
 
-def generate_training_data(input_dir, output_dir):
-    Path(output_dir).mkdir(exist_ok=True)
-    extractor = PDFFeatureExtractor(None)
-    for pdf_file in Path(input_dir).glob("*.pdf"):
-        extractor.pdf_path = str(pdf_file)
-        df, title = extractor.extract_features()
-        if not df.empty:
-            output_file = Path(output_dir) / f"{pdf_file.stem}_features.xlsx"
-            df.to_excel(output_file, index=False)
-            print(f"Features extracted for {pdf_file.name}, saved to {output_file}")
-
-if __name__ == "__main__":
-    input_dir = "pdfs"  # Directory containing PDFs
-    output_dir = "training_data"  # Directory to save Excel files
-    generate_training_data(input_dir, output_dir)
+def extract_features_from_pdf(pdf_path):
+    extractor = PDFFeatureExtractor(pdf_path)
+    df, title = extractor.extract_features()
+    return df

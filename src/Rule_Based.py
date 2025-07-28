@@ -844,7 +844,11 @@ def main():
     extractor = ImprovedPDFExtractor()
     result = extractor.extract_outline_json(pdf_path)
     
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    # Write result to output.json (for consistency with predict.py)
+    output_file = "output.json"
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    print(f"✅ Rule-based extraction complete. Output written to {output_file}")
 
 if __name__ == "__main__":
     main()
