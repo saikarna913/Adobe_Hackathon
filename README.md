@@ -16,12 +16,12 @@ This will create a Docker image named `pdf-extractor` with all dependencies and 
 
 ### 2. Prepare Your PDFs
 
-Place your PDF files in the `pdf/` directory inside the project root. (You can also mount any folder at runtime.)
+Place your PDF files in the `pdf/` directory inside the project root.
 
 
 ### 3. Run the Pipeline
 
-To process all PDFs in the `pdf/` directory, run:
+To process all PDFs in the `pdf/` directory, run: (mapping the local folders to docker volumes)
 
 ```sh
 docker run --rm -v $(pwd)/pdf:/app/pdf -v $(pwd)/outputs:/app/outputs pdf-extractor
@@ -36,13 +36,9 @@ All PDFs in the `pdf/` directory will be processed automatically.
 
 ### 4. View the Results
 
-After the run, the combined outputs will be saved as `<pdfname>_output.json` in the `outputs/` directory (e.g., `outputs/1_output.json`).
+After the run, the combined outputs will be saved as `<pdfname>_output.json` in the `outputs/` directory (e.g., `outputs/sample_output.json`).
 
 - Each output JSON contains the merged outline extracted by both the ML and rule-based extractors for that PDF.
 - You can open these files with any text editor or JSON viewer.
 
 ---
-
-**No manual Python or dependency setup is required. Everything runs inside the container!**
-
-For any issues, ensure your PDF is in the correct directory and the filename matches the command.
